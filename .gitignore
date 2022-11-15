@@ -95,3 +95,4 @@ fuzz/crash-*
 cmake-build-*
 third-party/folly/
 examples/bucket_example
+examples/iparticle.312.0.bin
