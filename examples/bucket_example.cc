@@ -5,8 +5,7 @@
 
 
 #include "bucket_example.h"
-#include <fstream>
-#include <sstream>
+
 #define INSTANCE_COUNT 5 
 
 #if defined(OS_WIN)
@@ -38,6 +37,8 @@ BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
   instance_count = count;
   pivot_offset = offset;
   pivot_size = size;  
+
+  cout << "Creating a db of insatnce count : "<<instance_count<<endl;
 
   // Optimize RocksDB. This is the easiest way to get RocksDB to perform well
   options.IncreaseParallelism();
@@ -190,63 +191,18 @@ uint32_t BucketedDB::value_range_query(float pv1, float pv2)
 
 int main() 
 {
-  BucketedDB* db = new BucketedDB(1, 28, 4);
-
-  /*unordered_map<string, int> kv;
-  kv["key1"] = 15;
-  kv["key2"] = 25;
-  kv["key3"] = 45;
-  kv["key4"] = 75;
-  kv["key5"] = 95;
-  kv["key6"] = 11;
-  kv["key7"] = 26;
-  kv["key8"] = 47;
-  kv["key9"] = 73;
-  kv["key10"] = 99;
-  kv["key11"] = 10;
-  kv["key12"] = 21;
-  kv["key13"] = 49;
-  kv["key14"] = 72;
-  kv["key15"] = 94;
-  kv["key16"] = 8;
-  kv["key17"] = 17;
-  kv["key18"] = 86;
-  kv["key19"] = 66;
-  kv["key20"] = 68;
-  kv["key21"] = 16;
-  kv["key22"] = 33;
-  kv["key23"] = 55;
-  kv["key24"] = 48;
-  kv["key25"] = 88;
-
-  unordered_map<string, int>::iterator it;
-  for(it = kv.begin();it != kv.end(); it++)
-  {
-    assert(db->put(it->first, to_string(it->second)).ok());
-
-  }
-
-  std::string value;
-
-  for(it = kv.begin();it != kv.end(); it++)
-  {
-    // get value
-    assert(db->get(it->first, &value).ok());
-    assert(to_string(kv[it->first]) == value);
-    cout << "Record -" << it->first <<":" <<  value << endl;
-
-  }
-
-  cout << "Value Range Query"<< endl;
-  db->value_range_query(20, 65);*/
+  BucketedDB* db = new BucketedDB(5, 28, 4);
 
   vector<uint64_t> key_collection;
   bool flag = true;
   struct timeval start, stop; 
   /********************************************************LOADING THE DATA***************************************************************************/
+  DIR *dr;
+  struct dirent *en;
+  dr = opendir("/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/");
 
   FILE* file_;
-  file_ = fopen("iparticle.312.0.bin", "r");
+  //file_ = fopen("/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/iparticle.312.0.bin", "r");
 
   particle_schema* particle = new particle_schema();
   string read_value;
@@ -255,41 +211,55 @@ int main()
   cout << "******************************Loading data......************************"<< endl;
   double total_time=0;
   double time;
-
-  while (!feof(file_))
+  string dataset_path = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/";
+  if (dr) 
   {
-
-    fread(particle, sizeof(particle_schema), 1, file_);
-    rocksdb::Slice value((char*)(&particle->value), sizeof(particle_value_schema));
-    rocksdb::Slice key((char*)(&particle->ID), sizeof(particle->ID));
-    
-    /*
-    if((key_collection.size() <= 5000) && flag)
+    while ((en = readdir(dr)) != NULL)
     {
-      key_collection.push_back(particle->ID);
+      if(en->d_type !=8 )     //valid file type
+      continue;
+      cout<<"Reading from "<<en->d_name<<endl; //print all directory name
+      string s(en->d_name);
+      s = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/" + s;
+      file_ = fopen(s.c_str(), "r");
+      while (!feof(file_))
+      {
+
+        fread(particle, sizeof(particle_schema), 1, file_);
+        rocksdb::Slice value((char*)(&particle->value), sizeof(particle_value_schema));
+        rocksdb::Slice key((char*)(&particle->ID), sizeof(particle->ID));
+        
+        /*
+        if((key_collection.size() <= 50000) && flag)
+        {
+          key_collection.push_back(particle->ID);
+        }
+        */
+
+        //cout << particle->value.x<<particle->value.y<<particle->value.z<<particle->value.i<<particle->value.ux<<particle->value.uy<<particle->value.uz<<particle->value.ke<<endl;
+        gettimeofday(&start, NULL); 
+        assert(db->put(key, value, particle->value.ke).ok());
+        gettimeofday(&stop, NULL);
+        time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
+        total_time += time;
+        /*assert(db->get(key, &read_value).ok());
+        particle_read_value = (particle_value_schema *)(read_value.data());
+        cout << particle_read_value->x<<particle_read_value->y<<particle_read_value->z<<particle_read_value->i<<particle_read_value->ux<<particle_read_value->uy<<particle_read_value->uz<<particle_read_value->ke<<endl;
+        assert(particle->value.x == particle_read_value->x);
+        assert(particle->value.y == particle_read_value->y);
+        assert(particle->value.z == particle_read_value->z);
+        assert(particle->value.ux == particle_read_value->ux);
+        assert(particle->value.uy == particle_read_value->uy);
+        assert(particle->value.uz == particle_read_value->uz);
+        assert(particle->value.i == particle_read_value->i);
+        assert(particle->value.ke == particle_read_value->ke);
+
+        flag = !flag;*/
+      }
     }
-    */
-
-    //cout << particle->value.x<<particle->value.y<<particle->value.z<<particle->value.i<<particle->value.ux<<particle->value.uy<<particle->value.uz<<particle->value.ke<<endl;
-    gettimeofday(&start, NULL); 
-    assert(db->put(key, value, particle->value.ke).ok());
-    gettimeofday(&stop, NULL);
-    time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
-    total_time += time;
-    /*assert(db->get(key, &read_value).ok());
-    particle_read_value = (particle_value_schema *)(read_value.data());
-    cout << particle_read_value->x<<particle_read_value->y<<particle_read_value->z<<particle_read_value->i<<particle_read_value->ux<<particle_read_value->uy<<particle_read_value->uz<<particle_read_value->ke<<endl;
-    assert(particle->value.x == particle_read_value->x);
-    assert(particle->value.y == particle_read_value->y);
-    assert(particle->value.z == particle_read_value->z);
-    assert(particle->value.ux == particle_read_value->ux);
-    assert(particle->value.uy == particle_read_value->uy);
-    assert(particle->value.uz == particle_read_value->uz);
-    assert(particle->value.i == particle_read_value->i);
-    assert(particle->value.ke == particle_read_value->ke);
-
-    flag = !flag;*/
+    closedir(dr); //close all directory
   }
+
   cout << "Time required = " << total_time << " seconds" <<endl;
   cout << "******************************Loading data ends************************"<< endl;
   /*********************************************************************END***************************************************************************/
@@ -308,8 +278,8 @@ int main()
     assert(db->get(key, &read_value).ok());
   }
   gettimeofday(&stop, NULL);
-  double total_time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
-  cout << "Time required = " << total_time << " seconds" <<endl;
+  double total_time1 = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
+  cout << "Time required = " << total_time1 << " seconds" <<endl;
   cout << "**********************************Time Measurement ends**********************"<< endl;
   */
   /****************************************************************END******************************************************************************/
@@ -318,17 +288,17 @@ int main()
 
 
   /********************************************************VALUE RANGE QUERY**************************************************************************/
-
+  
   cout << "****************************************Value Range Query********************************"<< endl;
   uint32_t record_count;
   gettimeofday(&start, NULL); 
   //record_count = db->value_range_query(0.021, 0.027);  //spanning single bucket
-  record_count = db->value_range_query(0.021, 0.077);  //spanning single bucket
+  record_count = db->value_range_query(0.021, 0.027);  //spanning single bucket
   gettimeofday(&stop, NULL);
-  double total_time1 = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
-  cout << "Time required = " << total_time1 << " seconds" <<endl;
+  double total_time2 = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
+  cout << "Time required = " << total_time2 << " seconds" <<endl;
   cout << "Record count = "<< record_count<<endl;
-
+  
   /****************************************************************END*******************************************************************************/
 
 

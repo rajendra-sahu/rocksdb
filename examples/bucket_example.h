@@ -8,6 +8,12 @@
 #include <iostream>
 
 #include "sys/time.h"
+#include <dirent.h>
+#include <sys/types.h>
+
+#include <fstream>
+#include <sstream>
+
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/options.h"
@@ -21,6 +27,8 @@ using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::WriteBatch;
 using ROCKSDB_NAMESPACE::WriteOptions;
 using namespace std;
+//namespace fs = std::filesystem;
+//using std::filesystem::directory_iterator;
 
 struct particle_value_schema
 {
