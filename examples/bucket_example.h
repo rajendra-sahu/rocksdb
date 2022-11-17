@@ -75,6 +75,7 @@ class BucketedDB
     //rocksdb::Status get(const rocksdb::Slice &key, std::string* value);
     uint32_t value_range_query(float pv1, float pv2);
     void value_point_query(float pv);
+    void print_db_stat();
     
 };
 

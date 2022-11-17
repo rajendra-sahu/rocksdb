@@ -189,6 +189,24 @@ uint32_t BucketedDB::value_range_query(float pv1, float pv2)
   return count;
 }
 
+void BucketedDB::print_db_stat()
+{
+  rocksdb::Iterator* iter;
+  uint64_t count = 0;
+  for(uint16_t i = 0; i< instance_count; i++)
+  {
+    iter = bucketedDB[i]->NewIterator(ReadOptions());
+    for (iter->SeekToFirst(); iter->Valid(); iter->Next())
+    {
+      if(iter->status().ok())
+      count++;
+    }
+    cout << "DB Bucket number : " << i << "Records Count :"<< count<<endl;
+    count = 0;
+  }
+}
+
+
 int main() 
 {
   BucketedDB* db = new BucketedDB(5, 28, 4);
@@ -196,6 +214,8 @@ int main()
   vector<uint64_t> key_collection;
   bool flag = true;
   struct timeval start, stop; 
+
+  db->print_db_stat();
   /********************************************************LOADING THE DATA***************************************************************************/
   DIR *dr;
   struct dirent *en;
@@ -212,23 +232,26 @@ int main()
   double total_time=0;
   double time;
   string dataset_path = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/";
+  uint8_t flag1 = 0;
+  uint64_t file_record_count = 0;
   if (dr) 
   {
     while ((en = readdir(dr)) != NULL)
     {
-      if(en->d_type !=8 )     //valid file type
+      if((en->d_type !=8) || (flag1 >= 2))     //valid file type
       continue;
-      cout<<"Reading from "<<en->d_name<<endl; //print all directory name
+      cout<<"Reading from "<<en->d_name<<endl; //print file name
       string s(en->d_name);
       s = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/" + s;
       file_ = fopen(s.c_str(), "r");
+      flag1++;
       while (!feof(file_))
       {
 
         fread(particle, sizeof(particle_schema), 1, file_);
         rocksdb::Slice value((char*)(&particle->value), sizeof(particle_value_schema));
         rocksdb::Slice key((char*)(&particle->ID), sizeof(particle->ID));
-        
+        file_record_count++;
         /*
         if((key_collection.size() <= 50000) && flag)
         {
@@ -255,7 +278,15 @@ int main()
         assert(particle->value.ke == particle_read_value->ke);
 
         flag = !flag;*/
+        /*if(file_record_count == 10)
+        {
+          db->print_db_stat();
+          break;
+        }*/
       }
+
+      cout<<"Record count in "<<en->d_name<< ": " << file_record_count <<endl; //print file name
+      file_record_count = 0;
     }
     closedir(dr); //close all directory
   }
@@ -265,7 +296,7 @@ int main()
   /*********************************************************************END***************************************************************************/
 
 
-
+  db->print_db_stat();
 
 
   /***************************************************TIME MEASUREMENTS FOR RANDOM GETS**************************************************************/
@@ -290,7 +321,7 @@ int main()
   /********************************************************VALUE RANGE QUERY**************************************************************************/
   
   cout << "****************************************Value Range Query********************************"<< endl;
-  uint32_t record_count;
+  uint64_t record_count;
   gettimeofday(&start, NULL); 
   //record_count = db->value_range_query(0.021, 0.027);  //spanning single bucket
   record_count = db->value_range_query(0.021, 0.027);  //spanning single bucket
