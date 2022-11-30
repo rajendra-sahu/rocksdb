@@ -57,6 +57,7 @@ class BucketedDB
 
     //vector<DB*> bucketedDB;
     DB* bucketedDB[30];   //try to parameterize this size
+    int put_record_count[30];
 
     uint8_t pivot_offset;
     uint8_t pivot_size;

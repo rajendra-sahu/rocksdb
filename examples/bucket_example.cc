@@ -22,12 +22,14 @@ BucketedDB::BucketedDB()
   // Optimize RocksDB. This is the easiest way to get RocksDB to perform well
   options.IncreaseParallelism();
   options.OptimizeLevelStyleCompaction();
+  options.max_open_files = 1000;
   // create the DB if it's not already present
   options.create_if_missing = true;
   for(uint16_t i =0; i < instance_count; i++)
   {
     Status s = DB::Open(options, kDBPath + char(32+ i), &bucketedDB[i]);
     assert(s.ok());
+    put_record_count[i] = 0;
 
   }
 }
@@ -48,6 +50,7 @@ BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
   {
     Status s = DB::Open(options, kDBPath + char(48+ i), &bucketedDB[i]); 
     assert(s.ok());
+    put_record_count[i] = 0;
   }
 }
 
@@ -82,9 +85,47 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, string value)   //de
 
 rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice &value, float pivot)
 {
-  uint16_t index = get_index(pivot);
+  uint16_t new_index = get_index(pivot);
+  uint16_t old_index;
+  bool found = false;
   //cout << "Putting in bucket = " <<index<<endl;
-  return bucketedDB[index]->Put(WriteOptions(), key, value);
+  string read_value;
+
+  for(uint16_t i =0; i < instance_count; i++)
+  {
+    Status s = bucketedDB[i]->Get(ReadOptions(), key, &read_value);
+    if(s.IsNotFound())
+    {
+      continue;
+    }
+    if(s.ok())
+    {
+      old_index = i;
+      found = true;
+      break;
+    }
+  }
+
+  if(found)
+  {
+    if(old_index == new_index)
+    {
+      return bucketedDB[new_index]->Put(WriteOptions(), key, value);
+    }
+    else
+    {
+      assert(bucketedDB[old_index]->SingleDelete(WriteOptions(), key).ok());
+      put_record_count[old_index]--;
+      put_record_count[new_index]++;
+      return bucketedDB[new_index]->Put(WriteOptions(), key, value);
+    }
+  }
+  else
+  {
+    put_record_count[new_index]++;
+    return bucketedDB[new_index]->Put(WriteOptions(), key, value);
+  }
+
 }
 
 rocksdb::Status BucketedDB::get( const rocksdb::Slice &key, string* value)
@@ -193,15 +234,23 @@ void BucketedDB::print_db_stat()
 {
   rocksdb::Iterator* iter;
   uint64_t count = 0;
+  string read_value;
+  particle_value_schema * particle_read_value;
   for(uint16_t i = 0; i< instance_count; i++)
   {
     iter = bucketedDB[i]->NewIterator(ReadOptions());
     for (iter->SeekToFirst(); iter->Valid(); iter->Next())
     {
       if(iter->status().ok())
-      count++;
+      {
+        assert(bucketedDB[i]->Get(ReadOptions(), iter->key(), &read_value).ok());
+        particle_read_value = (particle_value_schema *)(read_value.data());
+        //cout << particle_read_value->x<<particle_read_value->y<<particle_read_value->z<<particle_read_value->i<<particle_read_value->ux<<particle_read_value->uy<<particle_read_value->uz<<particle_read_value->ke<<endl;
+        count++;
+      }
     }
     cout << "DB Bucket number : " << i << "Records Count :"<< count<<endl;
+    cout << "DB Bucket number : " << i << "Expected Records Count :"<< put_record_count[i]<<endl;
     count = 0;
   }
 }
@@ -209,7 +258,7 @@ void BucketedDB::print_db_stat()
 
 int main() 
 {
-  BucketedDB* db = new BucketedDB(5, 28, 4);
+  BucketedDB* db = new BucketedDB(25, 28, 4);
 
   vector<uint64_t> key_collection;
   bool flag = true;
@@ -238,7 +287,7 @@ int main()
   {
     while ((en = readdir(dr)) != NULL)
     {
-      if((en->d_type !=8) || (flag1 >= 2))     //valid file type
+      if((en->d_type !=8) || (flag1 >= 5))     //valid file type
       continue;
       cout<<"Reading from "<<en->d_name<<endl; //print file name
       string s(en->d_name);
@@ -278,11 +327,11 @@ int main()
         assert(particle->value.ke == particle_read_value->ke);
 
         flag = !flag;*/
-        /*if(file_record_count == 10)
+        if(file_record_count == 50)
         {
           db->print_db_stat();
           break;
-        }*/
+        }
       }
 
       cout<<"Record count in "<<en->d_name<< ": " << file_record_count <<endl; //print file name
