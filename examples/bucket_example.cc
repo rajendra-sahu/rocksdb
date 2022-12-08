@@ -19,12 +19,20 @@ BucketedDB::BucketedDB()
   instance_count = 1;
   pivot_offset = 0; //starting of the value
   pivot_size = 4;   //default 4 bytes
+
   // Optimize RocksDB. This is the easiest way to get RocksDB to perform well
   options.IncreaseParallelism();
   options.OptimizeLevelStyleCompaction();
   options.max_open_files = 1000;
   // create the DB if it's not already present
   options.create_if_missing = true;
+
+  options.prefix_extractor.reset(NewCappedPrefixTransform(8));
+  table_options.filter_policy.reset(NewBloomFilterPolicy(10, false));
+  table_options.optimize_filters_for_memory = true;
+  table_options.whole_key_filtering = false;
+  options.table_factory.reset(NewBlockBasedTableFactory(table_options));
+
   for(uint16_t i =0; i < instance_count; i++)
   {
     Status s = DB::Open(options, kDBPath + char(32+ i), &bucketedDB[i]);
@@ -46,6 +54,14 @@ BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
   options.IncreaseParallelism();
   options.OptimizeLevelStyleCompaction();
   options.create_if_missing = true;
+
+  options.prefix_extractor.reset(NewCappedPrefixTransform(8));
+  table_options.filter_policy.reset(NewBloomFilterPolicy(30, false));
+  table_options.optimize_filters_for_memory = true;
+  table_options.whole_key_filtering = false;
+  options.table_factory.reset(NewBlockBasedTableFactory(table_options));
+
+
   for(uint16_t i =0; i < instance_count; i++)
   {
     Status s = DB::Open(options, kDBPath + char(48+ i), &bucketedDB[i]); 
@@ -90,10 +106,12 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
   bool found = false;
   //cout << "Putting in bucket = " <<index<<endl;
   string read_value;
+  Status s;
 
+  /*
   for(uint16_t i =0; i < instance_count; i++)
   {
-    Status s = bucketedDB[i]->Get(ReadOptions(), key, &read_value);
+    s = bucketedDB[i]->Get(ReadOptions(), key, &read_value);
     if(s.IsNotFound())
     {
       continue;
@@ -105,6 +123,33 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
       break;
     }
   }
+  */
+
+  //Bloom filter implementation
+  
+  for(uint16_t i =0; i < instance_count; i++)
+  {
+    if(!bucketedDB[i]->KeyMayExist(ReadOptions(), key, &read_value))
+    {
+      continue;
+    }
+    else                  //might be a case of false positive
+    {
+      s = bucketedDB[i]->Get(ReadOptions(), key, &read_value);    //Do actual get to confirm 
+      if(s.IsNotFound())
+      {
+        continue;
+      }
+      if(s.ok())
+      {
+        old_index = i;
+        found = true;
+        break;
+      }
+    }
+
+  }
+  
 
   if(found)
   {
@@ -125,6 +170,7 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
     put_record_count[new_index]++;
     return bucketedDB[new_index]->Put(WriteOptions(), key, value);
   }
+  
 
 }
 
@@ -327,11 +373,14 @@ int main()
         assert(particle->value.ke == particle_read_value->ke);
 
         flag = !flag;*/
+
+        /*
         if(file_record_count == 50)
         {
           db->print_db_stat();
           break;
         }
+        */
       }
 
       cout<<"Record count in "<<en->d_name<< ": " << file_record_count <<endl; //print file name

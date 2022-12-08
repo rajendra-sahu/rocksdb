@@ -17,6 +17,9 @@
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/options.h"
+#include "rocksdb/filter_policy.h"
+#include "rocksdb/table.h"
+#include "rocksdb/slice_transform.h"
 
 
 using ROCKSDB_NAMESPACE::DB;
@@ -26,9 +29,11 @@ using ROCKSDB_NAMESPACE::ReadOptions;
 using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::WriteBatch;
 using ROCKSDB_NAMESPACE::WriteOptions;
+using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
+using ROCKSDB_NAMESPACE::NewBloomFilterPolicy;
+using ROCKSDB_NAMESPACE::NewCappedPrefixTransform;
+using ROCKSDB_NAMESPACE::NewBlockBasedTableFactory;
 using namespace std;
-//namespace fs = std::filesystem;
-//using std::filesystem::directory_iterator;
 
 struct particle_value_schema
 {
@@ -65,6 +70,7 @@ class BucketedDB
 
     public:
     Options options;
+    BlockBasedTableOptions table_options;
 
     BucketedDB();
     BucketedDB(uint16_t count = 1, uint8_t offset = 0, uint8_t size = 4);
