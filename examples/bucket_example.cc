@@ -133,7 +133,7 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
     {
       continue;
     }
-    else                  //might be a case of false positive
+    else                                                          //might be a case of false positive
     {
       s = bucketedDB[i]->Get(ReadOptions(), key, &read_value);    //Do actual get to confirm 
       if(s.IsNotFound())
@@ -314,7 +314,9 @@ int main()
   /********************************************************LOADING THE DATA***************************************************************************/
   DIR *dr;
   struct dirent *en;
-  dr = opendir("/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/");
+  //string dataset_path = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/";
+  string dataset_path = "/home/rajendrasahu/workspace/ouo-vpic-dataset/";
+  dr = opendir(dataset_path.c_str());
 
   FILE* file_;
   //file_ = fopen("/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/iparticle.312.0.bin", "r");
@@ -326,18 +328,17 @@ int main()
   cout << "******************************Loading data......************************"<< endl;
   double total_time=0;
   double time;
-  string dataset_path = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/";
   uint8_t flag1 = 0;
   uint64_t file_record_count = 0;
   if (dr) 
   {
     while ((en = readdir(dr)) != NULL)
     {
-      if((en->d_type !=8) || (flag1 >= 5))     //valid file type
+      if((en->d_type !=8) || (flag1 >= 1))     //valid file type
       continue;
       cout<<"Reading from "<<en->d_name<<endl; //print file name
       string s(en->d_name);
-      s = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/" + s;
+      s = dataset_path + s;
       file_ = fopen(s.c_str(), "r");
       flag1++;
       while (!feof(file_))
