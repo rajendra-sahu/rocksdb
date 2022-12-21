@@ -1,7 +1,4 @@
-// Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under both the GPLv2 (found in the
-//  COPYING file in the root directory) and Apache 2.0 License
-//  (found in the LICENSE.Apache file in the root directory).
+// Copyright (c) Rajendra Sahu, Columnar Storage 
 
 
 #include "bucket_example.h"
@@ -99,6 +96,7 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, string value)   //de
   return bucketedDB[get_index(stof(value.substr(pivot_offset, pivot_size)))]->Put(WriteOptions(), key, value);
 }
 
+#ifdef BACKGROUND_GC_
 rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice &value, float pivot)
 {
   uint16_t new_index = get_index(pivot);
@@ -173,6 +171,26 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
   
 
 }
+#else
+rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice &value, float pivot)
+{
+
+  //Step1: Do the actual Put
+  Status put_status = bucketedDB[get_index(pivot)]->Put(WriteOptions(), key, value);
+
+  //Step2: Enqueu a delete background request
+
+  if(gc_queue.size() < GC_QUEUE_SIZE)
+  {
+    gc_queue.push(key.data());
+  }
+
+
+
+}
+
+#endif
+
 
 rocksdb::Status BucketedDB::get( const rocksdb::Slice &key, string* value)
 {

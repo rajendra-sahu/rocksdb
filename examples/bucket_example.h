@@ -1,3 +1,4 @@
+// Copyright (c) Rajendra Sahu, Columnar Storage 
 // bucket_example.h
 #ifndef BUCKET_HEADER_H
 #define BUCKET_HEADER_H
@@ -13,6 +14,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <queue>
 
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
@@ -21,7 +23,9 @@
 #include "rocksdb/table.h"
 #include "rocksdb/slice_transform.h"
 
+#define BACKGROUND_GC_
 
+#define GC_QUEUE_SIZE 100
 using ROCKSDB_NAMESPACE::DB;
 using ROCKSDB_NAMESPACE::Options;
 using ROCKSDB_NAMESPACE::PinnableSlice;
@@ -66,6 +70,8 @@ class BucketedDB
 
     uint8_t pivot_offset;
     uint8_t pivot_size;
+
+    queue<uint64_t> gc_queue;   //create concurrent_queue   
 
 
     public:
