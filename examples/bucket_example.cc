@@ -30,6 +30,8 @@ BucketedDB::BucketedDB()
   table_options.whole_key_filtering = false;
   options.table_factory.reset(NewBlockBasedTableFactory(table_options));
 
+  update_mode = false;
+
   for(uint16_t i =0; i < instance_count; i++)
   {
     Status s = DB::Open(options, kDBPath + char(32+ i), &bucketedDB[i]);
@@ -37,6 +39,10 @@ BucketedDB::BucketedDB()
     put_record_count[i] = 0;
 
   }
+
+  //ReaderWriterQueue<uint64_t> gc_queue(GC_QUEUE_SIZE);
+  //gc_queue = new ReaderWriterQueue<uint64_t> (GC_QUEUE_SIZE);
+  gc_queue = new MPMCQueue<uint64_t> (GC_QUEUE_SIZE);
 }
 
 BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
@@ -58,6 +64,7 @@ BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
   table_options.whole_key_filtering = false;
   options.table_factory.reset(NewBlockBasedTableFactory(table_options));
 
+  update_mode = false;
 
   for(uint16_t i =0; i < instance_count; i++)
   {
@@ -65,6 +72,10 @@ BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
     assert(s.ok());
     put_record_count[i] = 0;
   }
+
+  //ReaderWriterQueue<uint64_t> gc_queue(GC_QUEUE_SIZE);
+  //gc_queue = new ReaderWriterQueue<uint64_t> (GC_QUEUE_SIZE);
+  gc_queue = new MPMCQueue<uint64_t> (GC_QUEUE_SIZE);
 }
 
 BucketedDB::~BucketedDB()
@@ -96,7 +107,7 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, string value)   //de
   return bucketedDB[get_index(stof(value.substr(pivot_offset, pivot_size)))]->Put(WriteOptions(), key, value);
 }
 
-#ifdef BACKGROUND_GC_
+#ifdef NO_BACKGROUND_GC_
 rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice &value, float pivot)
 {
   uint16_t new_index = get_index(pivot);
@@ -175,17 +186,22 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
 rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice &value, float pivot)
 {
 
+  uint16_t index = get_index(pivot);
   //Step1: Do the actual Put
-  Status put_status = bucketedDB[get_index(pivot)]->Put(WriteOptions(), key, value);
+  Status put_status = bucketedDB[index]->Put(WriteOptions(), key, value);
+  put_record_count[index]++;                                                  //increase the record count in latest bucket
 
   //Step2: Enqueu a delete background request
-
-  if(gc_queue.size() < GC_QUEUE_SIZE)
+  if(update_mode)
   {
-    gc_queue.push(key.data());
+    //cout << " Main Thread trying to enqueue"<< endl;
+    //bool succeeded = gc_queue.try_enqueue((uint64_t)(*key.data()));
+    bool succeeded = gc_queue->try_push((uint64_t)(*key.data()));
+    assert(succeeded);
   }
 
-
+  
+  return put_status;
 
 }
 
@@ -319,21 +335,89 @@ void BucketedDB::print_db_stat()
   }
 }
 
+bool BucketedDB::gc_function()
+{
+  rocksdb::Slice key;
+  uint64_t pop_value;
+  bool found = false;
+  string read_value;
+  Status s;
+  uint16_t old_index;
+
+  //put some delay for warmup 
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+
+  //now start popping delete requests
+  //cout << " GC Thread trying to dequeue"<< endl;
+  //while(gc_queue.try_dequeue(pop_value))
+  while(gc_queue->try_pop(pop_value))
+  {
+    //cout << "Thread got actual delete requests"<< endl;
+
+    rocksdb::Slice key((char*)(&pop_value), 8);
+
+    //bloom filter checking
+    for(uint16_t i =0; i < instance_count; i++)
+    {
+      if(!bucketedDB[i]->KeyMayExist(ReadOptions(), key, &read_value))
+      {
+        continue;
+      }
+      else                                                          //might be a case of false positive
+      {
+        s = bucketedDB[i]->Get(ReadOptions(), key, &read_value);    //Do actual get to confirm 
+        if(s.IsNotFound())
+        {
+          continue;
+        }
+        if(s.ok())
+        {
+          old_index = i;      
+          found = true;
+          break;
+        }
+      }
+
+    }
+
+   
+    if(found)                                      
+    {
+      //TODO:eliminate doing puts when old_index == new_index
+      //doing actual delete after finding the dulplicate key
+      assert(bucketedDB[old_index]->SingleDelete(WriteOptions(), key).ok());
+      put_record_count[old_index]--;
+    }
+    else
+    {
+      //No delete to process; fresh key
+      continue;
+    }
+
+  }
+  cout << " GC Thread yielding to main thread"<< endl;
+  return true;
+}
 
 int main() 
 {
-  BucketedDB* db = new BucketedDB(25, 28, 4);
+  BucketedDB* db = new BucketedDB(5, 28, 4);
 
   vector<uint64_t> key_collection;
   bool flag = true;
   struct timeval start, stop; 
 
+
+  //future<bool> backgroundThread = async(launch::async, &BucketedDB::gc_function, db);
+  future<bool> backgroundThread;
+
   db->print_db_stat();
   /********************************************************LOADING THE DATA***************************************************************************/
   DIR *dr;
   struct dirent *en;
-  //string dataset_path = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/";
-  string dataset_path = "/home/rajendrasahu/workspace/ouo-vpic-dataset/";
+  string dataset_path = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/";
+  //string dataset_path = "/home/rajendrasahu/workspace/ouo-vpic-dataset/";
   dr = opendir(dataset_path.c_str());
 
   FILE* file_;
@@ -346,19 +430,28 @@ int main()
   cout << "******************************Loading data......************************"<< endl;
   double total_time=0;
   double time;
-  uint8_t flag1 = 0;
+  uint8_t files_count = 0;
   uint64_t file_record_count = 0;
   if (dr) 
   {
     while ((en = readdir(dr)) != NULL)
     {
-      if((en->d_type !=8) || (flag1 >= 1))     //valid file type
+      if((en->d_type !=8) || (files_count >= 2))     //valid file type
       continue;
       cout<<"Reading from "<<en->d_name<<endl; //print file name
       string s(en->d_name);
       s = dataset_path + s;
       file_ = fopen(s.c_str(), "r");
-      flag1++;
+
+      if(files_count == 1)
+      { db->update_mode = true;}  //TODO remove this attribute
+
+      files_count++;
+
+      #ifndef NO_BACKGROUND_GC_
+      backgroundThread = async(launch::async, &BucketedDB::gc_function, db);     //launch bg thread
+      #endif
+
       while (!feof(file_))
       {
 
@@ -404,6 +497,12 @@ int main()
 
       cout<<"Record count in "<<en->d_name<< ": " << file_record_count <<endl; //print file name
       file_record_count = 0;
+
+      #ifndef NO_BACKGROUND_GC_
+      backgroundThread.wait();
+      assert(backgroundThread.get());
+      cout << "Garbage collection done" << std::endl;
+      #endif
     }
     closedir(dr); //close all directory
   }

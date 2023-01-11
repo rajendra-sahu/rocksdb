@@ -15,6 +15,8 @@
 #include <fstream>
 #include <sstream>
 #include <queue>
+#include <thread>
+#include <future>
 
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
@@ -23,9 +25,15 @@
 #include "rocksdb/table.h"
 #include "rocksdb/slice_transform.h"
 
-#define BACKGROUND_GC_
 
-#define GC_QUEUE_SIZE 100
+//#include <readerwriterqueue/readerwriterqueue.h>
+//#include <readerwriterqueue/readerwritercircularbuffer.h>
+#include <MPMCQueue.h>
+
+//#define NO_BACKGROUND_GC_
+#define GC_QUEUE_SIZE 15728700
+
+
 using ROCKSDB_NAMESPACE::DB;
 using ROCKSDB_NAMESPACE::Options;
 using ROCKSDB_NAMESPACE::PinnableSlice;
@@ -38,6 +46,8 @@ using ROCKSDB_NAMESPACE::NewBloomFilterPolicy;
 using ROCKSDB_NAMESPACE::NewCappedPrefixTransform;
 using ROCKSDB_NAMESPACE::NewBlockBasedTableFactory;
 using namespace std;
+//using namespace moodycamel;
+using namespace rigtorp;
 
 struct particle_value_schema
 {
@@ -59,6 +69,12 @@ struct particle_schema
 };
 
 
+struct gc_request
+{
+    uint64_t key;                 //unique ID of a particle
+    uint16_t new_bucket_index;    //key exisitng in this bucket
+};
+
 class BucketedDB
 {
     private:
@@ -71,12 +87,13 @@ class BucketedDB
     uint8_t pivot_offset;
     uint8_t pivot_size;
 
-    queue<uint64_t> gc_queue;   //create concurrent_queue   
-
+    //ReaderWriterQueue<uint64_t> gc_queue;   //create concurrent_queue
+    MPMCQueue<uint64_t> *gc_queue;   
 
     public:
     Options options;
     BlockBasedTableOptions table_options;
+    bool update_mode;
 
     BucketedDB();
     BucketedDB(uint16_t count = 1, uint8_t offset = 0, uint8_t size = 4);
@@ -89,6 +106,7 @@ class BucketedDB
     uint32_t value_range_query(float pv1, float pv2);
     void value_point_query(float pv);
     void print_db_stat();
+    bool gc_function();
     
 };
 
