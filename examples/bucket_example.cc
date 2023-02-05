@@ -42,7 +42,7 @@ BucketedDB::BucketedDB()
 
   //ReaderWriterQueue<uint64_t> gc_queue(GC_QUEUE_SIZE);
   //gc_queue = new ReaderWriterQueue<uint64_t> (GC_QUEUE_SIZE);
-  gc_queue = new MPMCQueue<uint64_t> (GC_QUEUE_SIZE);
+  gc_queue = new MPMCQueue<gc_request> (GC_QUEUE_SIZE);
 }
 
 BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
@@ -75,7 +75,7 @@ BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
 
   //ReaderWriterQueue<uint64_t> gc_queue(GC_QUEUE_SIZE);
   //gc_queue = new ReaderWriterQueue<uint64_t> (GC_QUEUE_SIZE);
-  gc_queue = new MPMCQueue<uint64_t> (GC_QUEUE_SIZE);
+  gc_queue = new MPMCQueue<gc_request> (GC_QUEUE_SIZE);
 }
 
 BucketedDB::~BucketedDB()
@@ -192,13 +192,16 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
   put_record_count[index]++;                                                  //increase the record count in latest bucket
 
   //Step2: Enqueu a delete background request
-  if(update_mode)
-  {
+  //if(update_mode)
+  //{
     //cout << " Main Thread trying to enqueue"<< endl;
     //bool succeeded = gc_queue.try_enqueue((uint64_t)(*key.data()));
-    bool succeeded = gc_queue->try_push((uint64_t)(*key.data()));
+    gc_request request;
+    request.key = (uint64_t)(*key.data());
+    request.new_bucket_index = index;
+    bool succeeded = gc_queue->try_push(request);
     assert(succeeded);
-  }
+  //}
 
   
   return put_status;
@@ -338,7 +341,7 @@ void BucketedDB::print_db_stat()
 bool BucketedDB::gc_function()
 {
   rocksdb::Slice key;
-  uint64_t pop_value;
+  gc_request pop_value;
   bool found = false;
   string read_value;
   Status s;
@@ -355,7 +358,7 @@ bool BucketedDB::gc_function()
   {
     //cout << "Thread got actual delete requests"<< endl;
 
-    rocksdb::Slice key((char*)(&pop_value), 8);
+    rocksdb::Slice key((char*)(&pop_value.key), 8);
 
     //bloom filter checking
     for(uint16_t i =0; i < instance_count; i++)
@@ -386,8 +389,11 @@ bool BucketedDB::gc_function()
     {
       //TODO:eliminate doing puts when old_index == new_index
       //doing actual delete after finding the dulplicate key
-      assert(bucketedDB[old_index]->SingleDelete(WriteOptions(), key).ok());
-      put_record_count[old_index]--;
+      if(old_index != pop_value.new_bucket_index)    //when buckets don't match then only delete
+      {
+        assert(bucketedDB[old_index]->SingleDelete(WriteOptions(), key).ok());
+        put_record_count[old_index]--;
+      }
     }
     else
     {

@@ -88,7 +88,7 @@ class BucketedDB
     uint8_t pivot_size;
 
     //ReaderWriterQueue<uint64_t> gc_queue;   //create concurrent_queue
-    MPMCQueue<uint64_t> *gc_queue;   
+    MPMCQueue<gc_request> *gc_queue;   
 
     public:
     Options options;
