@@ -40,8 +40,6 @@ BucketedDB::BucketedDB()
 
   }
 
-  //ReaderWriterQueue<uint64_t> gc_queue(GC_QUEUE_SIZE);
-  //gc_queue = new ReaderWriterQueue<uint64_t> (GC_QUEUE_SIZE);
   gc_queue = new MPMCQueue<gc_request> (GC_QUEUE_SIZE);
 }
 
@@ -73,8 +71,6 @@ BucketedDB::BucketedDB(uint16_t count, uint8_t offset, uint8_t size)
     put_record_count[i] = 0;
   }
 
-  //ReaderWriterQueue<uint64_t> gc_queue(GC_QUEUE_SIZE);
-  //gc_queue = new ReaderWriterQueue<uint64_t> (GC_QUEUE_SIZE);
   gc_queue = new MPMCQueue<gc_request> (GC_QUEUE_SIZE);
 }
 
@@ -88,7 +84,6 @@ BucketedDB::~BucketedDB()
 
 uint16_t BucketedDB::get_index(float value) //Implement the hashing fuction
 {
-  //return (uint16_t)(value*100) % instance_count;
   uint16_t normalized_value = (uint16_t)(value*1000);
   uint16_t normalized_pivot_range_interval = 200/instance_count;   //hardcoded
   if(normalized_value >= 200)
@@ -246,10 +241,6 @@ void BucketedDB::value_point_query(float pv)
 
 uint32_t BucketedDB::value_range_query(float pv1, float pv2)
 {
-  /*for(float i = pv1; i<= pv2; i++)    //wrong logic;
-  {
-    value_point_query(i);
-  }*/
 
   uint32_t count = 0;
   rocksdb::Iterator* iter;
@@ -346,6 +337,7 @@ bool BucketedDB::gc_function()
   string read_value;
   Status s;
   uint16_t old_index;
+  uint32_t request_counter = 0;
 
   //put some delay for warmup 
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -353,13 +345,12 @@ bool BucketedDB::gc_function()
 
   //now start popping delete requests
   //cout << " GC Thread trying to dequeue"<< endl;
-  //while(gc_queue.try_dequeue(pop_value))
   while(gc_queue->try_pop(pop_value))
   {
     //cout << "Thread got actual delete requests"<< endl;
 
     rocksdb::Slice key((char*)(&pop_value.key), 8);
-
+    request_counter++;
     //bloom filter checking
     for(uint16_t i =0; i < instance_count; i++)
     {
@@ -402,6 +393,7 @@ bool BucketedDB::gc_function()
     }
 
   }
+  cout << " no of GC requests"<<request_counter<< endl;
   cout << " GC Thread yielding to main thread"<< endl;
   return true;
 }
@@ -425,9 +417,7 @@ int main()
   string dataset_path = "/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/";
   //string dataset_path = "/home/rajendrasahu/workspace/ouo-vpic-dataset/";
   dr = opendir(dataset_path.c_str());
-
   FILE* file_;
-  //file_ = fopen("/home/rajendrasahu/workspace/c2-vpic-sample-dataset/particles/iparticle.312.0.bin", "r");
 
   particle_schema* particle = new particle_schema();
   string read_value;
@@ -442,7 +432,7 @@ int main()
   {
     while ((en = readdir(dr)) != NULL)
     {
-      if((en->d_type !=8) || (files_count >= 2))     //valid file type
+      if((en->d_type !=8) || (files_count >= 1))     //valid file type
       continue;
       cout<<"Reading from "<<en->d_name<<endl; //print file name
       string s(en->d_name);
