@@ -17,6 +17,7 @@
 #include <queue>
 #include <thread>
 #include <future>
+#include <atomic>
 
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
@@ -26,8 +27,6 @@
 #include "rocksdb/slice_transform.h"
 
 
-//#include <readerwriterqueue/readerwriterqueue.h>
-//#include <readerwriterqueue/readerwritercircularbuffer.h>
 #include <MPMCQueue.h>
 
 //#define NO_BACKGROUND_GC_
@@ -80,14 +79,12 @@ class BucketedDB
     private:
     uint16_t instance_count;
 
-    //vector<DB*> bucketedDB;
-    DB* bucketedDB[30];   //try to parameterize this size
+    DB* bucketedDB[30];   //TODO-try to parameterize this size
     int put_record_count[30];
 
     uint8_t pivot_offset;
     uint8_t pivot_size;
 
-    //ReaderWriterQueue<uint64_t> gc_queue;   //create concurrent_queue
     MPMCQueue<gc_request> *gc_queue;   
 
     public:
