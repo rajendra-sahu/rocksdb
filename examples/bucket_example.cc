@@ -183,8 +183,10 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
 
   uint16_t index = get_index(pivot);
   //Step1: Do the actual Put
+  bucket_lock[index]->lock();
   Status put_status = bucketedDB[index]->Put(WriteOptions(), key, value);
   put_record_count[index]++;                                                  //increase the record count in latest bucket
+  bucket_lock[index]->unlock();
 
   //Step2: Enqueu a delete background request
   //if(update_mode)
@@ -338,9 +340,10 @@ bool BucketedDB::gc_function()
   Status s;
   uint16_t old_index;
   uint32_t request_counter = 0;
+  bool gc_flag = false;
 
   //put some delay for warmup 
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));                   //CALIBRATED
 
 
   //now start popping delete requests
@@ -349,11 +352,13 @@ bool BucketedDB::gc_function()
   {
     //cout << "Thread got actual delete requests"<< endl;
 
+    gc_flag= true;
     rocksdb::Slice key((char*)(&pop_value.key), 8);
     request_counter++;
     //bloom filter checking
     for(uint16_t i =0; i < instance_count; i++)
     {
+      //bucket_lock[i]->lock();
       if(!bucketedDB[i]->KeyMayExist(ReadOptions(), key, &read_value))
       {
         continue;
@@ -372,7 +377,7 @@ bool BucketedDB::gc_function()
           break;
         }
       }
-
+      //bucket_lock[i]->unlock();
     }
 
    
@@ -380,21 +385,25 @@ bool BucketedDB::gc_function()
     {
       //TODO:eliminate doing puts when old_index == new_index
       //doing actual delete after finding the dulplicate key
+      found = false;
       if(old_index != pop_value.new_bucket_index)    //when buckets don't match then only delete
       {
+        bucket_lock[old_index]->lock();
         assert(bucketedDB[old_index]->SingleDelete(WriteOptions(), key).ok());
         put_record_count[old_index]--;
+        bucket_lock[old_index]->unlock();
       }
     }
     else
     {
-      //No delete to process; fresh key
+      //No delete to process; fresh key  //TODO This case is abnormal if a delete request has been pushed  
       continue;
     }
 
   }
-  cout << " no of GC requests"<<request_counter<< endl;
-  cout << " GC Thread yielding to main thread"<< endl;
+  //cout << " no of GC requests"<<request_counter<< endl;
+  //cout << " GC Thread yielding to main thread"<< endl;
+  assert(gc_flag);
   return true;
 }
 
@@ -403,12 +412,11 @@ int main()
   BucketedDB* db = new BucketedDB(5, 28, 4);
 
   vector<uint64_t> key_collection;
-  bool flag = true;
   struct timeval start, stop; 
 
 
   //future<bool> backgroundThread = async(launch::async, &BucketedDB::gc_function, db);
-  future<bool> backgroundThread;
+  //future<bool> backgroundThread;
 
   db->print_db_stat();
   /********************************************************LOADING THE DATA***************************************************************************/
@@ -432,7 +440,7 @@ int main()
   {
     while ((en = readdir(dr)) != NULL)
     {
-      if((en->d_type !=8) || (files_count >= 1))     //valid file type
+      if((en->d_type !=8) || (files_count >= 2))     //valid file type
       continue;
       cout<<"Reading from "<<en->d_name<<endl; //print file name
       string s(en->d_name);
@@ -445,7 +453,7 @@ int main()
       files_count++;
 
       #ifndef NO_BACKGROUND_GC_
-      backgroundThread = async(launch::async, &BucketedDB::gc_function, db);     //launch bg thread
+      auto backgroundThread = async(launch::async, &BucketedDB::gc_function, db);     //launch bg thread
       #endif
 
       while (!feof(file_))
@@ -455,50 +463,29 @@ int main()
         rocksdb::Slice value((char*)(&particle->value), sizeof(particle_value_schema));
         rocksdb::Slice key((char*)(&particle->ID), sizeof(particle->ID));
         file_record_count++;
-        /*
-        if((key_collection.size() <= 50000) && flag)
-        {
-          key_collection.push_back(particle->ID);
-        }
-        */
 
-        //cout << particle->value.x<<particle->value.y<<particle->value.z<<particle->value.i<<particle->value.ux<<particle->value.uy<<particle->value.uz<<particle->value.ke<<endl;
         gettimeofday(&start, NULL); 
         assert(db->put(key, value, particle->value.ke).ok());
         gettimeofday(&stop, NULL);
         time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
         total_time += time;
-        /*assert(db->get(key, &read_value).ok());
-        particle_read_value = (particle_value_schema *)(read_value.data());
-        cout << particle_read_value->x<<particle_read_value->y<<particle_read_value->z<<particle_read_value->i<<particle_read_value->ux<<particle_read_value->uy<<particle_read_value->uz<<particle_read_value->ke<<endl;
-        assert(particle->value.x == particle_read_value->x);
-        assert(particle->value.y == particle_read_value->y);
-        assert(particle->value.z == particle_read_value->z);
-        assert(particle->value.ux == particle_read_value->ux);
-        assert(particle->value.uy == particle_read_value->uy);
-        assert(particle->value.uz == particle_read_value->uz);
-        assert(particle->value.i == particle_read_value->i);
-        assert(particle->value.ke == particle_read_value->ke);
 
-        flag = !flag;*/
-
-        /*
-        if(file_record_count == 50)
-        {
-          db->print_db_stat();
-          break;
-        }
-        */
       }
+
+      #ifndef NO_BACKGROUND_GC_
+      gettimeofday(&start, NULL); 
+      backgroundThread.wait();
+      //assert(backgroundThread.get());
+      gettimeofday(&stop, NULL);
+      time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
+      total_time += time;
+      cout << "Garbage collection done" << std::endl;
+      #endif
 
       cout<<"Record count in "<<en->d_name<< ": " << file_record_count <<endl; //print file name
       file_record_count = 0;
 
-      #ifndef NO_BACKGROUND_GC_
-      backgroundThread.wait();
-      assert(backgroundThread.get());
-      cout << "Garbage collection done" << std::endl;
-      #endif
+
     }
     closedir(dr); //close all directory
   }

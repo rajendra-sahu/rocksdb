@@ -26,7 +26,7 @@
 #include "rocksdb/table.h"
 #include "rocksdb/slice_transform.h"
 
-
+#include "bucket_includes.h"
 #include <MPMCQueue.h>
 
 //#define NO_BACKGROUND_GC_
@@ -80,6 +80,7 @@ class BucketedDB
     uint16_t instance_count;
 
     DB* bucketedDB[30];   //TODO-try to parameterize this size
+    Lock* bucket_lock[30];   //TODO-try to parameterize this size
     int put_record_count[30];
 
     uint8_t pivot_offset;
