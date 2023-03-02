@@ -24,14 +24,14 @@ class Lock {
   void lock() {
     std::unique_lock<std::mutex> lock(mutex_);
     while (locked_) {
-      cv_.wait(lock);
+    cv_.wait(lock);
     }
     locked_ = true;
   }
   void unlock() {
     std::unique_lock<std::mutex> lock(mutex_);
     locked_ = false;
-    cv_.notify_all();
+    cv_.notify_one();
   }
  private:
   std::mutex mutex_;

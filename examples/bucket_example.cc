@@ -79,7 +79,9 @@ BucketedDB::~BucketedDB()
   for(uint16_t i =0; i < instance_count; i++)
   {
     delete bucketedDB[i];
+
   }
+  delete gc_queue;
 }
 
 uint16_t BucketedDB::get_index(float value) //Implement the hashing fuction
