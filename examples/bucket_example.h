@@ -17,7 +17,7 @@
 #include <queue>
 #include <thread>
 #include <future>
-#include <atomic>
+#include <mutex>
 
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
@@ -80,7 +80,8 @@ class BucketedDB
     uint16_t instance_count;
 
     DB* bucketedDB[30];   //TODO-try to parameterize this size
-    Lock* bucket_lock[30];   //TODO-try to parameterize this size
+    //PCLock* bucket_lock[30];   //TODO-try to parameterize this size
+    std::mutex bucket_lock[30];
     int put_record_count[30];
 
     uint8_t pivot_offset;

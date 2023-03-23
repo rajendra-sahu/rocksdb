@@ -184,25 +184,40 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
 {
 
   uint16_t index = get_index(pivot);
+  Status put_status;
   //Step1: Do the actual Put
-  bucket_lock[index]->lock();
-  Status put_status = bucketedDB[index]->Put(WriteOptions(), key, value);
-  put_record_count[index]++;                                                  //increase the record count in latest bucket
-  bucket_lock[index]->unlock();
+  {
+    std::unique_lock<std::mutex> lock(bucket_lock[index]);
 
-  //Step2: Enqueu a delete background request
-  //if(update_mode)
-  //{
-    //cout << " Main Thread trying to enqueue"<< endl;
-    //bool succeeded = gc_queue.try_enqueue((uint64_t)(*key.data()));
+    //Processing
+    put_status = bucketedDB[index]->Put(WriteOptions(), key, value);
+    put_record_count[index]++;
+
+  } 
+
+
+
+  //Step2: Enqueu a delete background request, no need of locking here, queue is thread safe, lockless
+
+  gc_request request;
+  request.key = (uint64_t)(*key.data());
+  request.new_bucket_index = index;
+  bool succeeded = gc_queue->try_push(request);
+  assert(succeeded);
+
+  /*
+  if(update_mode)
+  {
+    cout << " Main Thread trying to enqueue"<< endl;
+    bool succeeded = gc_queue.try_enqueue((uint64_t)(*key.data()));
     gc_request request;
     request.key = (uint64_t)(*key.data());
     request.new_bucket_index = index;
     bool succeeded = gc_queue->try_push(request);
     assert(succeeded);
-  //}
+  }
+  */
 
-  
   return put_status;
 
 }
@@ -360,7 +375,7 @@ bool BucketedDB::gc_function()
     //bloom filter checking
     for(uint16_t i =0; i < instance_count; i++)
     {
-      //bucket_lock[i]->lock();
+      std::unique_lock<std::mutex> lock(bucket_lock[i]);
       if(!bucketedDB[i]->KeyMayExist(ReadOptions(), key, &read_value))
       {
         continue;
@@ -379,7 +394,7 @@ bool BucketedDB::gc_function()
           break;
         }
       }
-      //bucket_lock[i]->unlock();
+
     }
 
    
@@ -390,10 +405,12 @@ bool BucketedDB::gc_function()
       found = false;
       if(old_index != pop_value.new_bucket_index)    //when buckets don't match then only delete
       {
-        bucket_lock[old_index]->lock();
+        std::unique_lock<std::mutex> lock(bucket_lock[old_index]);
+
+        //Processing
         assert(bucketedDB[old_index]->SingleDelete(WriteOptions(), key).ok());
         put_record_count[old_index]--;
-        bucket_lock[old_index]->unlock();
+
       }
     }
     else
@@ -405,7 +422,7 @@ bool BucketedDB::gc_function()
   }
   //cout << " no of GC requests"<<request_counter<< endl;
   //cout << " GC Thread yielding to main thread"<< endl;
-  assert(gc_flag);
+  //assert(gc_flag);
   return true;
 }
 
@@ -450,7 +467,7 @@ int main()
       file_ = fopen(s.c_str(), "r");
 
       if(files_count == 1)
-      { db->update_mode = true;}  //TODO remove this attribute
+      { db->update_mode = true;}  //TODO implement this attribute
 
       files_count++;
 
@@ -472,12 +489,17 @@ int main()
         time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
         total_time += time;
 
+        if(file_record_count == 200)
+        {
+          break;
+        }
+
       }
 
       #ifndef NO_BACKGROUND_GC_
       gettimeofday(&start, NULL); 
       backgroundThread.wait();
-      //assert(backgroundThread.get());
+      assert(backgroundThread.get());
       gettimeofday(&stop, NULL);
       time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
       total_time += time;
