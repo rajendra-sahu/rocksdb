@@ -44,6 +44,8 @@ using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
 using ROCKSDB_NAMESPACE::NewBloomFilterPolicy;
 using ROCKSDB_NAMESPACE::NewCappedPrefixTransform;
 using ROCKSDB_NAMESPACE::NewBlockBasedTableFactory;
+using ROCKSDB_NAMESPACE::FlushOptions;
+using ROCKSDB_NAMESPACE::CompactRangeOptions; 
 using namespace std;
 //using namespace moodycamel;
 using namespace rigtorp;
@@ -92,12 +94,16 @@ class BucketedDB
     public:
     Options options;
     BlockBasedTableOptions table_options;
+    FlushOptions flush_options;
+    CompactRangeOptions compact_range_options;
     bool update_mode;
 
     BucketedDB();
     BucketedDB(uint16_t count = 1, uint8_t offset = 0, uint8_t size = 4);
     ~BucketedDB();
     uint16_t get_index(float value);
+    void flush();
+    void compact();
     rocksdb::Status put(const rocksdb::Slice &key, std::string value);
     rocksdb::Status get(const rocksdb::Slice &key, std::string* value);
     rocksdb::Status put(const rocksdb::Slice &key, const rocksdb::Slice &value, float pivot);

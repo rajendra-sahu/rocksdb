@@ -99,6 +99,25 @@ uint16_t BucketedDB::get_index(float value) //Implement the hashing fuction
 
 }
 
+void BucketedDB::flush()
+{
+  for(uint16_t i =0; i < instance_count; i++)
+  {
+    Status s = bucketedDB[i]->Flush(flush_options); 
+    assert(s.ok());
+  } 
+}
+
+void BucketedDB::compact()
+{
+  for(uint16_t i =0; i < instance_count; i++)
+  {
+    Status s = bucketedDB[i]->CompactRange(compact_range_options, nullptr, nullptr); 
+    assert(s.ok());
+  } 
+}
+
+
 rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, string value)   //deprecated, shouldn't be used
 {
   return bucketedDB[get_index(stof(value.substr(pivot_offset, pivot_size)))]->Put(WriteOptions(), key, value);
@@ -130,8 +149,10 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
     }
   }
   */
+  
 
   //Bloom filter implementation
+  
   
   for(uint16_t i =0; i < instance_count; i++)
   {
@@ -153,10 +174,14 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
         break;
       }
     }
-
   }
   
 
+  //debugging prints    
+  particle_value_schema* particle_read_value = (particle_value_schema*)(value.data());  
+  cout << "Record - " <<(uint64_t)(*(uint64_t*)(key.data()))<<" -> ";
+  cout << particle_read_value->x << " : "<<particle_read_value->y<<" : " <<particle_read_value->z<<" : " <<particle_read_value->i<<" : " <<particle_read_value->ux<<" : " <<particle_read_value->uy<<" : " <<particle_read_value->uz<<" : " <<particle_read_value->ke<<endl;
+  
   if(found)
   {
     if(old_index == new_index)
@@ -176,19 +201,29 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
     put_record_count[new_index]++;
     return bucketedDB[new_index]->Put(WriteOptions(), key, value);
   }
-  
 
 }
+
 #else
 rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice &value, float pivot)
 {
 
   uint16_t index = get_index(pivot);
   Status put_status;
+
+  //debugging prints
+  /*    
+  if(index == 0)
+  {
+    particle_value_schema* particle_read_value = (particle_value_schema*)(value.data());
+    cout << "Record - " <<(uint64_t)(*(uint64_t*)(key.data()))<<" -> ";
+    cout << particle_read_value->x << " : "<<particle_read_value->y<<" : " <<particle_read_value->z<<" : " <<particle_read_value->i<<" : " <<particle_read_value->ux<<" : " <<particle_read_value->uy<<" : " <<particle_read_value->uz<<" : " <<particle_read_value->ke<<endl;
+  }
+  */
+
   //Step1: Do the actual Put
   {
     std::unique_lock<std::mutex> lock(bucket_lock[index]);
-
     //Processing
     put_status = bucketedDB[index]->Put(WriteOptions(), key, value);
     put_record_count[index]++;
@@ -199,19 +234,21 @@ rocksdb::Status BucketedDB::put( const rocksdb::Slice &key, const rocksdb::Slice
 
   //Step2: Enqueu a delete background request, no need of locking here, queue is thread safe, lockless
 
+  
   gc_request request;
-  request.key = (uint64_t)(*key.data());
+  request.key = (uint64_t)(*(uint64_t*)(key.data()));
+  //cout << "Pushing key into quueue"<< request.key<<endl;
   request.new_bucket_index = index;
   bool succeeded = gc_queue->try_push(request);
   assert(succeeded);
+  
 
   /*
   if(update_mode)
   {
-    cout << " Main Thread trying to enqueue"<< endl;
-    bool succeeded = gc_queue.try_enqueue((uint64_t)(*key.data()));
     gc_request request;
-    request.key = (uint64_t)(*key.data());
+    request.key = (uint64_t)(*(uint64_t*)(key.data()));
+    //cout << "Pushing key into quueue"<< request.key<<endl;
     request.new_bucket_index = index;
     bool succeeded = gc_queue->try_push(request);
     assert(succeeded);
@@ -252,7 +289,7 @@ void BucketedDB::value_point_query(float pv)
     particle_value_schema* particle_read_value = (particle_value_schema*)(iter->value().data());
     if(particle_read_value->ke == pv)
     {
-      cout << "Record -" <<iter->key().data() <<":";
+      cout << "Record - " <<(uint64_t)(*(uint64_t*)(iter->key().data())) <<" -> ";
       cout << particle_read_value->x<<particle_read_value->y<<particle_read_value->z<<particle_read_value->i<<particle_read_value->ux<<particle_read_value->uy<<particle_read_value->uz<<particle_read_value->ke<<endl;
     }
   }
@@ -338,7 +375,6 @@ void BucketedDB::print_db_stat()
       {
         assert(bucketedDB[i]->Get(ReadOptions(), iter->key(), &read_value).ok());
         particle_read_value = (particle_value_schema *)(read_value.data());
-        //cout << particle_read_value->x<<particle_read_value->y<<particle_read_value->z<<particle_read_value->i<<particle_read_value->ux<<particle_read_value->uy<<particle_read_value->uz<<particle_read_value->ke<<endl;
         count++;
       }
     }
@@ -400,9 +436,8 @@ bool BucketedDB::gc_function()
    
     if(found)                                      
     {
-      //TODO:eliminate doing puts when old_index == new_index
+      //TODO:eliminate doing puts when old_index == new_index (can't distinguish between fresh put and update)
       //doing actual delete after finding the dulplicate key
-      found = false;
       if(old_index != pop_value.new_bucket_index)    //when buckets don't match then only delete
       {
         std::unique_lock<std::mutex> lock(bucket_lock[old_index]);
@@ -410,8 +445,10 @@ bool BucketedDB::gc_function()
         //Processing
         assert(bucketedDB[old_index]->SingleDelete(WriteOptions(), key).ok());
         put_record_count[old_index]--;
-
       }
+
+
+      found = false;
     }
     else
     {
@@ -420,9 +457,7 @@ bool BucketedDB::gc_function()
     }
 
   }
-  //cout << " no of GC requests"<<request_counter<< endl;
-  //cout << " GC Thread yielding to main thread"<< endl;
-  //assert(gc_flag);
+
   return true;
 }
 
@@ -434,8 +469,6 @@ int main()
   struct timeval start, stop; 
 
 
-  //future<bool> backgroundThread = async(launch::async, &BucketedDB::gc_function, db);
-  //future<bool> backgroundThread;
 
   db->print_db_stat();
   /********************************************************LOADING THE DATA***************************************************************************/
@@ -448,7 +481,6 @@ int main()
 
   particle_schema* particle = new particle_schema();
   string read_value;
-  particle_value_schema* particle_read_value;
 
   cout << "******************************Loading data......************************"<< endl;
   double total_time=0;
@@ -459,7 +491,7 @@ int main()
   {
     while ((en = readdir(dr)) != NULL)
     {
-      if((en->d_type !=8) || (files_count >= 2))     //valid file type
+      if((en->d_type !=8) /*|| (files_count >= 2)*/)     //valid file type
       continue;
       cout<<"Reading from "<<en->d_name<<endl; //print file name
       string s(en->d_name);
@@ -479,8 +511,8 @@ int main()
       {
 
         fread(particle, sizeof(particle_schema), 1, file_);
-        rocksdb::Slice value((char*)(&particle->value), sizeof(particle_value_schema));
-        rocksdb::Slice key((char*)(&particle->ID), sizeof(particle->ID));
+        rocksdb::Slice value((char*)(&(particle->value)), sizeof(particle_value_schema));
+        rocksdb::Slice key((char*)(&(particle->ID)), sizeof(particle->ID));
         file_record_count++;
 
         gettimeofday(&start, NULL); 
@@ -489,10 +521,13 @@ int main()
         time = (stop.tv_sec-start.tv_sec)+0.000001*(stop.tv_usec-start.tv_usec);
         total_time += time;
 
-        if(file_record_count == 200)
+        /*
+        if(file_record_count == 50)
         {
           break;
         }
+        */
+        
 
       }
 
@@ -514,10 +549,9 @@ int main()
     closedir(dr); //close all directory
   }
 
-  cout << "Time required = " << total_time << " seconds" <<endl;
+  cout << "Time required to load = " << total_time << " seconds" <<endl;
   cout << "******************************Loading data ends************************"<< endl;
   /*********************************************************************END***************************************************************************/
-
 
   db->print_db_stat();
 
